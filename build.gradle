@@ -1,0 +1,177 @@
+plugins {
+    id "java-library"
+    id "ivy-publish"
+    id("io.github.gradle-nexus.publish-plugin") //version "1.3.0"
+    id 'signing'
+}
+
+group = "io.github.gradle-nexus-e2e"
+String versionTimestamp = (new Date()).format("yyyyMMdd-HHmmss") //See: https://issues.sonatype.org/browse/OSSRH-86532
+String versionSuffix = (System.env.CI == "true") ? "ci${System.env.GITHUB_RUN_NUMBER ?: ''}-${versionTimestamp}" : "local-ivy-sbt"
+version = project.hasProperty("overriddenVersion") ? project.property("overriddenVersion") : "0.0.1-$versionSuffix"
+
+sourceCompatibility = 1.8
+
+//Small hack to override release related properties to prevent accidental production release if called interactively
+//Intended to fail if required (non-optional) values are not provided
+if (!project.hasProperty("disableE2EOverriding")) {
+    List<String> propertiesToOverride = ['sonatypeUsername', 'sonatypePassword']
+    List<String> optionalPropertiesToOverride = ['signingKey', 'signingPassword', 'signing.gnupg.keyName', 'signing.gnupg.homeDir', 'signing.gnupg.passphrase']
+    logger.lifecycle("Overriding properties ${propertiesToOverride + optionalPropertiesToOverride} to use *E2E (non-production) values. Can be disbled with '-PdisableE2EOverriding'")
+    overridePropertiesForE2E(propertiesToOverride)
+    overrideOptionalPropertiesForE2E(optionalPropertiesToOverride)
+}
+
+void overridePropertiesForE2E(List<String> propertyToOverrideNames, boolean failIfNotProvided = true) {
+    propertyToOverrideNames.each { String propertyNameToOverride ->
+        project.ext[propertyNameToOverride] = project.getProperty("${propertyNameToOverride}E2E")
+    }
+}
+
+void overrideOptionalPropertiesForE2E(List<String> propertyToOverrideNames) {
+    propertyToOverrideNames.each { String propertyNameToOverride ->
+        String e2ePropertyNameToOverride = "${propertyNameToOverride}E2E"
+        if (project.hasProperty("$e2ePropertyNameToOverride")) {
+            project.ext[propertyNameToOverride] = project.getProperty("$e2ePropertyNameToOverride")
+        } else if (project.hasProperty(propertyNameToOverride)) {
+            logger.info("Nullifying $propertyNameToOverride")
+            project.ext[propertyNameToOverride] = null
+            //to ask for e2e passphrase using gpg-agent if executed interactively, even if production passprease is defined
+        } else {
+            logger.info("Ignoring not set twice $propertyNameToOverride")
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+nexusPublishing {
+    publicationType = io.github.gradlenexus.publishplugin.NexusPublishExtension.PublicationType.IVY
+    ivyPatternLayout {
+        artifact "[organisation]/[module]_foo/[revision]/[artifact]-[revision](-[classifier])(.[ext])"
+        m2compatible = true
+    }
+    repositories {
+        sonatype {
+            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
+            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
+            stagingProfileId = "248647f1a45ed6" //can reduce execution time by even 10 seconds
+        }
+    }
+}
+
+
+def makePom = tasks.register("makePom") {
+    def pomFile = file("$buildDir/libs/${rootProject.name}-${version}.pom")
+    it.inputs.property("organisationName", rootProject.group)
+    it.inputs.property("moduleName", rootProject.name)
+    it.inputs.property("version", version)
+    it.outputs.file(pomFile)
+
+
+    doLast {
+        def content = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>${inputs.properties.get("organisationName")}</groupId>
+                <artifactId>${inputs.properties.get("moduleName")}</artifactId>
+                <packaging>jar</packaging>
+                <name>${inputs.properties.get("moduleName")}</name>
+                <description>${inputs.properties.get("moduleName")}</description>
+                <url>https://github.com/maczikasz/nexus-publish-e2e-minimal-ivy-sbt</url>
+                <scm>    
+                    <connection>scm:git:git@github.com:maczikasz/nexus-publish-e2e-minimal-ivy-sbt</connection>
+                    <developerConnection>scm:git:git@github.com:maczikasz/nexus-publish-e2e-minimal-ivy-sbt</developerConnection>
+                    <url>https://github.com/maczikasz/nexus-publish-e2e-minimal-ivy-sbt</url>
+                </scm>
+                <licenses>
+                     <license>
+                        <name>MIT</name>
+                    </license>
+                </licenses>
+                <developers>
+                    <developer>
+                      <id>maczikasz</id>
+                      <name>Szava Maczika</name>
+                      <email>smaczika@gradle.com</email>
+                      <url>https://github.com/maczikasz</url>
+                      <organization>Gradle</organization>
+                      <organizationUrl>https://www.gradle.com</organizationUrl>
+                      <roles>
+                        <role>developer</role>
+                      </roles>
+                      <timezone>Europe/Budapest</timezone>
+                    </developer>
+                </developers>
+                <version>${inputs.properties.get("version")}</version>
+            </project>
+        """.stripMargin().stripIndent().strip()
+
+
+        //Project name missing, Project URL missing, License information missing, SCM URL missing, Developer information missing
+
+        // Create the parent directory if it does not exist
+        pomFile.parentFile.mkdirs()
+
+        pomFile.text = content
+    }
+}
+
+
+publishing {
+    publications {
+        ivy(IvyPublication) {
+            from(components.java)
+            descriptor {
+                license {
+                    name = 'The Apache License, Version 2.0'
+                    url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                }
+                author {
+                    url = 'https://github.com/szpak'
+                    name = 'Marcin Zajączkowski'
+                }
+                author {
+                    url = 'https://github.com/marcphilipp'
+                    name = 'Marc Philipp'
+                }
+                description {
+                    text = 'Minimal project publishing artifacts to Nexus for E2E testing in gradle-nexus-publish-plugin'
+                    homepage = 'https://github.com/gradle-nexus-e2e/nexus-publish-e2e-minimal'
+                }
+            }
+
+            artifact(makePom.map { it.outputs.files.singleFile }) {}
+
+        }
+    }
+}
+
+signing {
+    required { !project.version.endsWith("-SNAPSHOT") && !project.hasProperty("skipSigning") }
+    if (project.findProperty("signingKey")) {
+        useInMemoryPgpKeys(findProperty("signingKey"), findProperty("signingPassword"))
+    } else {
+        useGpgCmd()
+    }
+    sign publishing.publications.ivy
+}
+//do not generate extra load on Nexus with new staging repository if signing fails
+tasks.withType(io.github.gradlenexus.publishplugin.InitializeNexusStagingRepository).configureEach {
+    shouldRunAfter(tasks.withType(Sign))
+}
+
+javadoc {
+    if (JavaVersion.current().isJava9Compatible()) {
+        options.addBooleanOption('html5', true)
+    }
+}
+

@@ -53,7 +53,7 @@ java {
 }
 
 nexusPublishing {
-    publicationType = io.github.gradlenexus.publishplugin.NexusPublishExtension.PublicationType.IVY
+    publicationType = io.github.gradlenexus.publishplugin.NexusRepository.PublicationType.IVY
     ivyPatternLayout {
         artifact "[organisation]/[module]_foo/[revision]/[artifact]-[revision](-[classifier])(.[ext])"
         m2compatible = true

@@ -53,15 +53,13 @@ java {
 }
 
 nexusPublishing {
-    publicationType = io.github.gradlenexus.publishplugin.NexusRepository.PublicationType.IVY
-    ivyPatternLayout {
-        artifact "[organisation]/[module]_foo/[revision]/[artifact]-[revision](-[classifier])(.[ext])"
-        m2compatible = true
-    }
     repositories {
         sonatype {
-            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
+            publicationType = io.github.gradlenexus.publishplugin.NexusRepository.PublicationType.IVY
+            ivyPatternLayout {
+                artifact "[organisation]/[module]_foo/[revision]/[artifact]-[revision](-[classifier])(.[ext])"
+                m2compatible = true
+            }
             stagingProfileId = "248647f1a45ed6" //can reduce execution time by even 10 seconds
         }
     }
